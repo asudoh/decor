@@ -213,6 +213,9 @@ define([
 		var seq = 0,
 			hotCallbacks = {},
 			deliverHandle = null,
+			difference = function (lhs, rhs) {
+				return lhs._seq - rhs._seq;
+			},
 			deliverAllByTimeout = function () {
 				/* global Platform */
 				has("polymer-platform") && Platform.performMicrotaskCheckpoint(); // For Polymer watching for Observable
@@ -224,20 +227,20 @@ define([
 						callbacks.push(hotCallbacks[s]);
 					}
 					hotCallbacks = {};
-					callbacks = callbacks.sort(function (lhs, rhs) {
-						return lhs._seq - rhs._seq;
-					});
+					callbacks = callbacks.sort(difference);
 					for (var i = 0, l = callbacks.length; i < l; ++i) {
-						if (callbacks[i]._changeRecords.length > 0) {
-							Observable.deliverChangeRecords(callbacks[i]);
-							anyWorkDone = true;
+						if (callbacks[i]._changeRecords.length > 0 || callbacks[i]._syntheticCallbacks) {
+							if (Observable.deliverChangeRecords(callbacks[i])) {
+								anyWorkDone = true;
+							}
 						}
 					}
 				}
 				deliverHandle = null;
 			},
 			removeGarbageCallback = function (callback) {
-				if (callback._changeRecords.length === 0 && callback._refCountOfNotifier === 0) {
+				if ((!callback._changeRecords || callback._changeRecords.length === 0)
+					&& callback._refCountOfNotifier === 0) {
 					callback._seq = undefined;
 				}
 			};
@@ -380,15 +383,30 @@ define([
 		 * @param {Function} callback The change callback to deliver change records of.
 		 */
 		Observable.deliverChangeRecords = function (callback) {
-			var length = callback._changeRecords.length;
-			try {
-				callback(callback._changeRecords.splice(0, length));
-			} catch (e) {
-				has("console-api") && console.error("Error occured in observer callback: " + (e.stack || e));
+			var total = 0,
+				keys = callback._syntheticCallbacks ? Object.keys(callback._syntheticCallbacks) : [];
+			for (var i = -1; i < keys.length; ++i) {
+				var current = i < 0 ? callback : callback._syntheticCallbacks[keys[i]],
+					length = !current._changeRecords ? 0 : current._changeRecords.length;
+				if (length > 0) {
+					total += length;
+					try {
+						current(current._changeRecords.splice(0, length));
+					} catch (e) {
+						has("console-api") && console.error("Error occured in observer callback: " + (e.stack || e));
+					}
+					removeGarbageCallback(current);
+				}
 			}
-			removeGarbageCallback(callback);
-			return length > 0;
+			return total > 0;
 		};
+
+		/**
+		 * Internal property for Observable inheritances,
+		 * to generate unique ID of callbacks for normalizing change records.
+		 * @type {Number}
+		 */
+		Observable._syntheticCallbackSeq = 0;
 	}
 
 	return Observable;

@@ -1,8 +1,9 @@
 define([
 	"intern!object",
 	"intern/chai!assert",
+	"decor/features",
 	"decor/Observable"
-], function (registerSuite, assert, Observable) {
+], function (registerSuite, assert, has, Observable) {
 	var handles = [],
 		pseudoError = new Error("Error thrown on purpose. This error does not mean bad result of test case.");
 	// TODO(asudoh): Look more at Object.observe() spec and add more tests
@@ -313,6 +314,212 @@ define([
 				]);
 			})));
 			observable.set("foo", "Foo0");
+		},
+		"Synchronous change delivery": function () {
+			var observable = new Observable(),
+				changes = [],
+				callback = function (records) {
+					changes.push.apply(changes, records);
+				};
+			handles.push(Observable.observe(observable, callback));
+			observable.set("foo", "Foo0");
+			observable.set("bar", "Bar");
+			observable.set("foo", "Foo1");
+			Observable.deliverChangeRecords(callback);
+			assert.deepEqual(changes, [
+				{
+					type: "add",
+					object: observable,
+					name: "foo"
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "bar"
+				},
+				{
+					type: "update",
+					object: observable,
+					name: "foo",
+					oldValue: "Foo0"
+				}
+			]);
+		},
+		"(Internal API) Synchronous change delivery with synthetic observer callback": function () {
+			var observable = new Observable(),
+				changes = [],
+				callback = function (records) {
+					changes.push.apply(changes, records);
+				},
+				syntheticCallback = function (records) {
+					callback(records.map(function (record) {
+						record.synthetic = true;
+					}));
+				};
+			callback._syntheticCallbacks = {};
+			callback._syntheticCallbacks["_syntheticCallback" + Observable._syntheticCallbackSeq++] = syntheticCallback;
+			handles.push(Observable.observe(observable, syntheticCallback));
+			observable.set("foo", "Foo0");
+			observable.set("bar", "Bar");
+			observable.set("foo", "Foo1");
+			Observable.deliverChangeRecords(callback);
+			assert.deepEqual(changes, has("object-observe-api") ? [] : [
+				{
+					type: "add",
+					object: observable,
+					name: "foo",
+					synthetic: true
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "bar",
+					synthetic: true
+				},
+				{
+					type: "update",
+					object: observable,
+					name: "foo",
+					oldValue: "Foo0",
+					synthetic: true
+				}
+			]);
+		},
+		"(Internal API) Synchronous change delivery with authentic observer callback and synthetic observer callback":
+		function () {
+			var observable = new Observable(),
+				changes = [],
+				callback = function (records) {
+					changes.push.apply(changes, records);
+				},
+				syntheticCallback = function (records) {
+					callback(records.map(function (record) {
+						record.synthetic = true;
+					}));
+				};
+			callback._syntheticCallbacks = {};
+			callback._syntheticCallbacks["_syntheticCallback" + Observable._syntheticCallbackSeq++] = syntheticCallback;
+			handles.push(Observable.observe(observable, callback));
+			handles.push(Observable.observe(observable, syntheticCallback));
+			observable.set("foo", "Foo0");
+			observable.set("bar", "Bar");
+			observable.set("foo", "Foo1");
+			Observable.deliverChangeRecords(callback);
+			assert.deepEqual(changes, has("object-observe-api") ? [
+				{
+					type: "add",
+					object: observable,
+					name: "foo"
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "bar"
+				},
+				{
+					type: "update",
+					object: observable,
+					name: "foo",
+					oldValue: "Foo0"
+				}
+			] : [
+				{
+					type: "add",
+					object: observable,
+					name: "foo"
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "bar"
+				},
+				{
+					type: "update",
+					object: observable,
+					name: "foo",
+					oldValue: "Foo0"
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "foo",
+					synthetic: true
+				},
+				{
+					type: "add",
+					object: observable,
+					name: "bar",
+					synthetic: true
+				},
+				{
+					type: "update",
+					object: observable,
+					name: "foo",
+					oldValue: "Foo0",
+					synthetic: true
+				}
+			]);
+		},
+		"(Internal API) Observing both authentic observer callback and synthetic observer callback": function () {
+			var dfd = this.async(1000),
+				observable = new Observable(),
+				count = 0,
+				changes = [],
+				callback = dfd.rejectOnError(function (records) {
+					changes.push.apply(changes, records);
+					if (++count === 2) {
+						setTimeout(dfd.callback(function () {
+							assert.equal(count, 2, "Should not be called more than two times.");
+							assert.deepEqual(records, [
+								{
+									type: "add",
+									object: observable,
+									name: "foo"
+								},
+								{
+									type: "add",
+									object: observable,
+									name: "bar"
+								},
+								{
+									type: "update",
+									object: observable,
+									name: "foo",
+									oldValue: "Foo0"
+								},
+								{
+									type: "add",
+									object: observable,
+									name: "foo",
+									synthetic: true
+								},
+								{
+									type: "add",
+									object: observable,
+									name: "bar",
+									synthetic: true
+								},
+								{
+									type: "update",
+									object: observable,
+									name: "foo",
+									oldValue: "Foo0",
+									synthetic: true
+								}
+							]);
+						}), 100);
+					}
+				}),
+				syntheticCallback = dfd.rejectOnError(function (records) {
+					callback(records);
+				});
+			callback._syntheticCallbacks = {};
+			callback._syntheticCallbacks["_syntheticCallback" + Observable._syntheticCallbackSeq++] = syntheticCallback;
+			handles.push(Observable.observe(observable, syntheticCallback));
+			handles.push(Observable.observe(observable, callback));
+			observable.set("foo", "Foo0");
+			observable.set("bar", "Bar");
+			observable.set("foo", "Foo1");
 		},
 		"Synthetic change record": function () {
 			var dfd = this.async(1000),
